@@ -217,7 +217,31 @@ def t3Stop(arglist):
     with open('tasks/tasks.json', 'w') as f:
         json.dump(data, f)
 
+# Maja Swiderska functions add
+def t3Summary(arglist):
+    #t3 --summary
+    inputFile = 'tasks/tasks.json'
+    try:
+        with open(inputFile, 'r') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print("No tasks found.")
+        return
 
+    t3json = data['t3']
+    print("\n--- Project Time Summary ---")
+
+    total_time_all_projects = 0
+    for project_name, tasks_list in t3json.items():
+        project_total_time = 0
+
+        for tasks in task_list:
+            project_total_time += task.get('timeSpent', 0)
+
+        total_time_all_projects += project_total_time
+            print(f"Project: {project_name} | Total Time: {project_total_time} minutes")
+            print("----------------------------")
+            print(f"Total Time Tracked: {total_time_all_projects} minutes\n")
 
 def _main():
 
