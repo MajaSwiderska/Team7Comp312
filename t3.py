@@ -243,6 +243,35 @@ def t3Summary(arglist):
             print("----------------------------")
             print(f"Total Time Tracked: {total_time_all_projects} minutes\n")
 
+def t3Pending(arglist):
+    #t3 --pending
+    inputFile = 'tasks/tasks.json'
+    try:
+        with open(inputFile, 'r') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print("Error: tasks.json not found")
+        return
+    t3json = data['t3']
+    print("\n--- Pending Tasks (Due Dates and Priorities) ---")
+
+    found_pending = False
+
+    for project_name, task_list in t3json.items():
+        for task in task_list:
+            if not task.get ('completed', False):
+                found_pending = True
+                priority = task.get('priority', 'normal')
+                due_date = task.get('dueDate', 'none')
+
+                print(f"Project: {project_name} | Task: {task['taskName']}")
+                print(f" -> Priority: {priority} | Due: {due_date}")
+
+    if not found_pending:
+        print("No pending tasks found")
+    print("----------------------------------------------\n")
+        
+
 def _main():
 
     """Run the CLI Interface for T3"""
