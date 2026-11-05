@@ -4,9 +4,15 @@ import time
 import datetime
 import os
 import json
+import sqlite3
 
 """time tracker and to do list, T3. Todo list where you can add your tasks, keep track of how long you have been working on them, and save your output to a text file for additional scripting"""
 """T3 is to assist those who struggle with time management through a simple, easy to use to do list time tracker """
+
+def get_db_connection():
+    conn = sqlite3.connect("t3.db")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 def t3Complete(arglist):
     #t3 --complete 'activity'
