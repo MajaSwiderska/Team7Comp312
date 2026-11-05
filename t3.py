@@ -226,28 +226,26 @@ def t3Stop(arglist):
 # Maja Swiderska functions add
 def t3Summary(arglist):
     #t3 --summary
-    inputFile = 'tasks/tasks.json'
-    try:
-        with open(inputFile, 'r') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print("No tasks found.")
-        return
-
-    t3json = data['t3']
+    conn = get_db_connection()
+    cursor = conn.cursor()
     print("\n--- Project Time Summary ---")
 
-    total_time_all_projects = 0
-    for project_name, tasks_list in t3json.items():
-        project_total_time = 0
+    cursor.execute("""
+        SELECT projects.name, SUM(tasks.time_spent)
+        FROM tasks
+        JOIN projects ON tasks.project_id = project_id
+        GROUP BY project.id
+    """)
 
-        for tasks in task_list:
-            project_total_time += task.get('timeSpent', 0)
-
-        total_time_all_projects += project_total_time
-            print(f"Project: {project_name} | Total Time: {project_total_time} minutes")
-            print("----------------------------")
-            print(f"Total Time Tracked: {total_time_all_projects} minutes\n")
+    results = cursor.fetchall()
+    total_time = 0
+    for row in results:
+            if row[1] > 0:
+                print(f"Project: {row[0]} | Total time: {row[1]} minutes")
+                total_time += row[1]
+    print("----------------------------")
+    print(f"Total Time Tracked: {total_time} minutes\n")
+    conn.close()
 
 def t3Pending(arglist):
     #t3 --pending
