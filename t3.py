@@ -249,31 +249,25 @@ def t3Summary(arglist):
 
 def t3Pending(arglist):
     #t3 --pending
-    inputFile = 'tasks/tasks.json'
-    try:
-        with open(inputFile, 'r') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print("Error: tasks.json not found")
-        return
-    t3json = data['t3']
+    conn = get_db_connection()
+    cursor = conn.cursor()
     print("\n--- Pending Tasks (Due Dates and Priorities) ---")
 
-    found_pending = False
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.priority, tasks.due_date
+        FROM tasks
+        JOIN projects ON tasks.project_id = project.id
+        WHERE tasks.completed = 0
+    """)
 
-    for project_name, task_list in t3json.items():
-        for task in task_list:
-            if not task.get ('completed', False):
-                found_pending = True
-                priority = task.get('priority', 'normal')
-                due_date = task.get('dueDate', 'none')
-
-                print(f"Project: {project_name} | Task: {task['taskName']}")
-                print(f" -> Priority: {priority} | Due: {due_date}")
-
-    if not found_pending:
+    pending = cursor.fetchall()
+    if not pending:
         print("No pending tasks found")
-    print("----------------------------------------------\n")
+    else:
+        for row in pending:
+            print(f"Project: {row[0]} | Task: {row[1]} | Priority: {row[2]} | Due: {row[3]}")
+        print("----------------------------------------------\n")
+        conn.close()
         
 
 def _main():
