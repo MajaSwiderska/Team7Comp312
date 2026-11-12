@@ -249,20 +249,51 @@ def t3Delete(arglist):
 def t3Edit(arglist):
     #t3 --edit 'projectName'
     #needs to be able to check that user input the correct format
+    if len(arglist) < 2:
+        print("Error: Usage is t3 --edit [projectName] [taskName]")
+        return
+    
     projectName = arglist[0]
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    data = json.loads(jsonData) 
+    taskName = arglist[1]
 
-    for k in data:
-        if projectName == k['projectName']:
-            print("Current Time Is: " + str(k['timeSpent']))    
-            newTime = input("Enter New Time In Minutes: ")
-            #Converts user input of minutes to seconds
-            k['timeSpent'] = float(newTime)
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    with open('tasks/tasks.json', 'w') as f:
-        json.dump(data, f)
+    cursor.execute("""
+        SELECT task.id, tasks.time_spent
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE projects.name = ? AND tasks.name = ?
+    """, (projectName, taskName))
+
+    task = cursor.fetchone()
+
+    if not task:
+        print(f"Error: Task {taskName} not found in {projectName}.")
+        conn.close()
+        return
+
+    task_id = task[0]
+    print(f"Editing task: {taskName} (Current time: {task[1]}m)")
+
+    newTime = input("Enter New Time In Minutes (or press Enter to skip): ")
+    newPriority = input ("Enter Priority (High/Medium/Low, or press Enter to skip): ")
+    newDue = input("Enter Due Date (e.g., 2026-11-01 or press Enter to skip): ")
+    newTags = input("Enter Tags (comma separted or press Enter to skip): ")
+
+    if newTime.strip():
+        cursor.execute("UPDATE tasks SET time_spent = ? WHERE id = ?", (float(newTime), task_id))
+    if newPriority.strip():
+        cursor.execute("UPDATE tasks SET priority = ? WHERE id = ?", (newPriority, task_id))
+    if newDue.strip():
+        cursor.execute("UPDATE tasks SET due_date = ? WHERE id = ?", (newDue, task_id))
+    if newTags.strip(): # NEW
+        cursor.execute("UPDATE tasks SET tags = ? WHERE id = ?", (newTags, task_id))
+
+    conn.commit()
+    print("Task updated successfully")
+    conn.close()
+
 
 def t3Start(arglist):
     #t3 --start 'projectName'
@@ -313,8 +344,8 @@ def t3Summary(arglist):
     cursor.execute("""
         SELECT projects.name, SUM(tasks.time_spent)
         FROM tasks
-        JOIN projects ON tasks.project_id = project_id
-        GROUP BY project.id
+        JOIN projects ON tasks.project_id = projects_id
+        GROUP BY projects.id
     """)
 
     results = cursor.fetchall()
@@ -336,7 +367,7 @@ def t3Pending(arglist):
     cursor.execute("""
         SELECT projects.name, tasks.name, tasks.priority, tasks.due_date
         FROM tasks
-        JOIN projects ON tasks.project_id = project.id
+        JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.completed = 0
     """)
 
@@ -345,6 +376,7 @@ def t3Pending(arglist):
         print("No pending tasks found")
     else:
         for row in pending:
+            tags = row[4] if row[4] else "None"
             print(f"Project: {row[0]} | Task: {row[1]} | Priority: {row[2]} | Due: {row[3]}")
         print("----------------------------------------------\n")
         conn.close()

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed INTEGER DEFAULT 0,
     priority TEXT DEFAULT 'normal',
     due_date TEXT,
+    tags TEXT,
     FOREIGN KEY (project_id) REFERENCES projects(id)
 )
 """)
