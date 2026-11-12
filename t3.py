@@ -30,58 +30,96 @@ def t3Complete(arglist):
 
 
 def t3Report(arglist):
-    #t3 --report active/completed/all
-    #active prints out current projects
-    #completed prints out only completed projects
-    #all prints out the entire json file
-
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    jsonToPython = json.loads(jsonData)
-
-    t3json=jsonToPython['t3']	# pld
-    dumpprojects(t3json)
+    # t3 --report active/completed/all
 
     if len(arglist) == 0:
-        userChoice = 'all'
+        user_choice = "all"
     else:
-        userChoice = arglist[0]
+        user_choice = arglist[0]
 
-    if userChoice == 'active':
-        for pname in t3json:
-            tasklist = t3json[pname]
-            if k['completed'] == False:
-                print("Projects: ",jsonT2Python[k]['projectName'])
-                print("Time Spent: ",  time.strftime("%H:%M:%S", time.gmtime(k['timeSpent'])))
-    elif userChoice == 'completed':
-        for pname in t3json:
-            tasklist = t3json[pname]
-            tsum = 0
-            for t in tasklist:
-                tsum+= t['timeSpent']
-            print('Time Spent: {}'.format(tsum))
-            if k['completed'] == True:
-                print("Projects: ",k['projectName'])
-                print("Time Spent: ", time.strftime("%H:%M:%S", time.gmtime(k['timeSpent'])))
-    elif userChoice == 'all':
-        for pname in t3json:
-            tasklist = t3json[pname]
-            print("Project "+ pname)
-            for t in tasklist:
-                 if t['completed']: completed = ''
-                 else: completed = 'not '
-                 print('    task {}: timeSpent {}, {}completed'.format(t['taskName'], t['timeSpent'], completed))
-            tsum = 0
-            for t in tasklist:
-                tsum+= t['timeSpent']
-            print('Time Spent: {} minutes'.format(tsum))
-            #print("Time Spent: ", time.strftime("%H:%M:%S", time.gmtime(k['timeSpent'])))
-            (completed, total) = completecount(tasklist)
-            if completed == total: print('All tasks are completed')
-            else: print('{} of {} tasks are completed'.format(completed, total))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if user_choice == "all":
+
+        cursor.execute("""
+            SELECT
+                projects.name,
+                tasks.name,
+                tasks.time_spent,
+                tasks.completed
+            FROM tasks
+            JOIN projects
+                ON tasks.project_id = projects.id
+            ORDER BY projects.name
+        """)
+
+    elif user_choice == "active":
+
+        cursor.execute("""
+            SELECT
+                projects.name,
+                tasks.name,
+                tasks.time_spent,
+                tasks.completed
+            FROM tasks
+            JOIN projects
+                ON tasks.project_id = projects.id
+            WHERE tasks.completed = 0
+            ORDER BY projects.name
+        """)
+
+    elif user_choice == "completed":
+
+        cursor.execute("""
+            SELECT
+                projects.name,
+                tasks.name,
+                tasks.time_spent,
+                tasks.completed
+            FROM tasks
+            JOIN projects
+                ON tasks.project_id = projects.id
+            WHERE tasks.completed = 1
+            ORDER BY projects.name
+        """)
 
     else:
-        print("Invalid Option. Choose active/completed/all")
+        print(
+            "Invalid option. "
+            "Choose active/completed/all"
+        )
+        conn.close()
+        return
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        print("No tasks found.")
+        conn.close()
+        return
+
+    current_project = None
+
+    for row in rows:
+        project_name = row[0]
+        task_name = row[1]
+        time_spent = row[2]
+        completed = row[3]
+
+        if project_name != current_project:
+            print(f"\nProject: {project_name}")
+            current_project = project_name
+
+        status = "completed" if completed else "not completed"
+
+        print(
+            f"    Task: {task_name} | "
+            f"Time Spent: {time_spent} | "
+            f"{status}"
+        )
+
+    conn.close()
 
 # pld: returns (num_tasks_completed, num_tasks_total)
 def completecount(tasklist):
@@ -93,38 +131,80 @@ def completecount(tasklist):
 # format of arglist: [projectName, taskname1, taskname2, ...]
 # for existing projects, the new task(s) are added.
 def t3Add(arglist):
-    #t3 --add 'activity'
-    #Adds a new project
-    #new entry structure
-    projectName = arglist[0]
-    tasknamelist = arglist[1:]
-    if len(tasknamelist) == 0:
-         newtasklist = [{"taskName" : "maintask", "timeSpent": 0, 'timeStamp':'', 'completed':False}]
+    # t3 --add projectName task1 task2 ... taskN
+
+    if len(arglist) == 0:
+        print("Error: project name required")
+        return
+
+    project_name = arglist[0]
+    task_names = arglist[1:]
+
+    if len(task_names) == 0:
+        task_names = ["maintask"]
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Check whether project already exists
+    cursor.execute(
+        "SELECT id FROM projects WHERE name = ?",
+        (project_name,)
+    )
+
+    row = cursor.fetchone()
+
+    if row is None:
+        # Project does not exist, so create it
+        cursor.execute(
+            "INSERT INTO projects (name) VALUES (?)",
+            (project_name,)
+        )
+
+        project_id = cursor.lastrowid
+
     else:
-         newtasklist = []
-         for tname in tasknamelist:
-             newtasklist.append({"taskName" : tname, "timeSpent": 0, 'timeStamp':'', 'completed':False})
+        # Project already exists
+        project_id = row[0]
 
-    # task1 = {"taskName": projectName,"timeSpent":0,"timeStamp":'',"completed":False}
+    # Add tasks
+    for task_name in task_names:
 
+        cursor.execute(
+            """
+            SELECT id
+            FROM tasks
+            WHERE project_id = ? AND name = ?
+            """,
+            (project_id, task_name)
+        )
 
-    with open('tasks/tasks.json') as f:
-        data = json.load(f)
+        existing_task = cursor.fetchone()
 
-    t3data = data['t3']			# pld
+        if existing_task:
+            print(
+                f"Error: project {project_name} "
+                f"already has a task {task_name}"
+            )
 
-    #Now take all the tasks in newtasklist and add them to t3data[projectName]
-    for t in newtasklist:
-        tname = t['taskName']		# should not be None!
-        #debug print ('working on task {}'.format(tname))
-        if findtask(tname, t3data[projectName]):
-            print('Error: project {} already has a task {}'.format(projectName, tname))
         else:
-            t3data[projectName].append(t)
+            cursor.execute(
+                """
+                INSERT INTO tasks
+                (project_id, name, time_spent,
+                 completed, priority)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (project_id, task_name, 0, 0, "normal")
+            )
 
-    # now write the updated json file
-    with open('tasks/tasks.json', 'w') as f:
-        json.dump(data, f)
+            print(
+                f"Added task {task_name} "
+                f"to project {project_name}"
+            )
+
+    conn.commit()
+    conn.close()
 
 # returns the (first) task in tlist with name equal to string tname, or None if not found
 

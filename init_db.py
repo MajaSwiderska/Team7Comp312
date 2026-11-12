@@ -27,31 +27,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 )
 """)
 
-# save
-conn.commit()
 
-# Insert rows in both tables
-cursor.execute(
-    "INSERT INTO projects (name) VALUES (?)",
-    ("project1",)
-)
-
-project_id = cursor.lastrowid
-
-cursor.execute("""
-INSERT INTO tasks
-(project_id, name, time_spent, completed, priority)
-VALUES (?, ?, ?, ?, ?)
-""", (project_id, "task1", 0, 0, "normal"))
-
-cursor.execute("""
-SELECT projects.name, tasks.name, tasks.completed, tasks.priority
-FROM tasks
-JOIN projects
-ON tasks.project_id = projects.id
-""")
-
-print(cursor.fetchall())
 
 conn.commit()
 conn.close()
