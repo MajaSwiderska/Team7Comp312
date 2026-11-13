@@ -260,7 +260,7 @@ def t3Edit(arglist):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT task.id, tasks.time_spent
+        SELECT tasks.id, tasks.time_spent
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         WHERE projects.name = ? AND tasks.name = ?
@@ -344,7 +344,7 @@ def t3Summary(arglist):
     cursor.execute("""
         SELECT projects.name, SUM(tasks.time_spent)
         FROM tasks
-        JOIN projects ON tasks.project_id = projects_id
+        JOIN projects ON tasks.project_id = projects.id
         GROUP BY projects.id
     """)
 
@@ -379,8 +379,8 @@ def t3Pending(arglist):
         for row in pending:
             tags = row[4] if row[4] else "None"
             print(f"Project: {row[0]} | Task: {row[1]} | Priority: {row[2]} | Due: {row[3]} | Tags: {tags}")
-        print("----------------------------------------------\n")
-        conn.close()
+    print("----------------------------------------------\n")
+    conn.close()
 
 def t3Search(arglist):
     if not arglist:
@@ -434,8 +434,8 @@ def t3Running(arglist):
             elapsed_minutes = round((current_time - start_time) / 60, 2)
             print(f"Project: {row[0]} | Task: {row[1]} | Running for: {elapsed_minutes} minutes")
 
-            print("--------------------------------\n")
-            conn.close()
+    print("--------------------------------\n")
+    conn.close()
 
 def t3Progress(arglist):
     conn = get_db_connection()
@@ -459,12 +459,12 @@ def t3Progress(arglist):
 
         if total > 0:
             percentage = int((completed / total) * 100)
-            print(f"PRoject: {row[0]} | Progress: {percentage}%({completed} of {total} tasks done)")
+            print(f"Project: {row[0]} | Progress: {percentage}%({completed} of {total} tasks done)")
         else:
             print(f"Project: {row[0]} | No tasks added yet.")
 
-        print("------------------------\n")
-        conn.close()
+    print("------------------------\n")
+    conn.close()
 
 def t3ClearCompleted(arglist):
     conn = get_db_connection()
@@ -480,7 +480,7 @@ def t3ClearCompleted(arglist):
         conn.commit()
         print(f"\nSuccessfully cleared {count} completed task(s) from the database.")
 
-        conn.close()
+    conn.close()
 
 def _main():
 
