@@ -396,7 +396,7 @@ def t3Search(arglist):
     cursor.execute("""
         SELECT projects.name, tasks.name, tasks.completed
         FROM tasks
-        JOIN projects ON tasks.project_id = projects_id
+        JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.tags LIKE ?
     """, (f'%{search_term}%',))
 
@@ -411,6 +411,32 @@ def t3Search(arglist):
     print("----------------------------------------------\n")
     conn.close()
 
+def t3Running(arglist):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    print("\n--- Currently Running Timers ---")
+
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.time_stamp
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.time_stamp IS NOT NULL AND tasks.time_stamp != 0
+    """)
+
+    results = cursor.fetchall()
+    if not results:
+        print("No timers are currently running.")
+    else:
+        current_time = time.time()
+        for row in results:
+            start_time = float(row[2])
+            elapsed_minutes = round((current_time - start_time) / 60, 2)
+            print(f"Project: {row[0]} | Task: {row[1]} | Running for: {elapsed_minutes} minutes")
+
+            print("--------------------------------\n")
+            conn.close()
+            
 def _main():
 
     """Run the CLI Interface for T3"""
