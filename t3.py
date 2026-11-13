@@ -437,6 +437,35 @@ def t3Running(arglist):
             print("--------------------------------\n")
             conn.close()
             
+def t3Progress(arglist):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    print("\n--- Project Progress ---")
+
+    cursor.execute("""
+        SELECT projects.name,
+               COUNT(tasks.id) as total_tasks,
+               SUM(CASE WHEN tasks.completed = 1 THEN 1 ELSE 0 END) as completed_tasks
+        FROM projects
+        LEFT JOIN tasks ON projects.id = tasks.project_id
+        GROUP BY projects.id
+    """)
+
+    results = cursor.fetchall()
+    for row in results:
+        total = row[1]
+        completed = row[2] if row[2] else 0
+
+        if total > 0:
+            percentage = int((completed / total) * 100)
+            print(f"PRoject: {row[0]} | Progress: {percentage}%({completed} of {total} tasks done)")
+        else:
+            print(f"Project: {row[0]} | No tasks added yet.")
+
+        print("------------------------\n")
+        conn.close()
+
 def _main():
 
     """Run the CLI Interface for T3"""
