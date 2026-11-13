@@ -351,9 +351,10 @@ def t3Summary(arglist):
     results = cursor.fetchall()
     total_time = 0
     for row in results:
-            if row[1] > 0:
+            if row[1] and row[1] > 0:
                 print(f"Project: {row[0]} | Total time: {row[1]} minutes")
                 total_time += row[1]
+
     print("----------------------------")
     print(f"Total Time Tracked: {total_time} minutes\n")
     conn.close()
@@ -362,10 +363,10 @@ def t3Pending(arglist):
     #t3 --pending
     conn = get_db_connection()
     cursor = conn.cursor()
-    print("\n--- Pending Tasks (Due Dates and Priorities) ---")
+    print("\n--- Pending Tasks (Due Dates and Priorities, Tags) ---")
 
     cursor.execute("""
-        SELECT projects.name, tasks.name, tasks.priority, tasks.due_date
+        SELECT projects.name, tasks.name, tasks.priority, tasks.due_date, tasks.tags
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.completed = 0
@@ -377,10 +378,38 @@ def t3Pending(arglist):
     else:
         for row in pending:
             tags = row[4] if row[4] else "None"
-            print(f"Project: {row[0]} | Task: {row[1]} | Priority: {row[2]} | Due: {row[3]}")
+            print(f"Project: {row[0]} | Task: {row[1]} | Priority: {row[2]} | Due: {row[3]} | Tags: {tags}")
         print("----------------------------------------------\n")
         conn.close()
-        
+
+def t3Search(arglist):
+    if not arglist:
+        print("Error: Please specify a tag to search for.")
+        return
+
+    search_term = arglist[0]
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    print(f"\n--- Search Results for Tag: '{search_term}' ---")
+
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.completed
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects_id
+        WHERE tasks.tags LIKE ?
+    """, (f'%{search_term}%',))
+
+    results = cursor.fetchall()
+    if not results:
+        print("No tasks found with that tag.")
+    else:
+        for row in results:
+            status = "completed" if row[2] else "pending"
+            print(f"Project: {row[0]} | Task: {row[1]} | Status: {status}")
+
+    print("----------------------------------------------\n")
+    conn.close()
 
 def _main():
 
