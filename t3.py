@@ -436,7 +436,7 @@ def t3Running(arglist):
 
             print("--------------------------------\n")
             conn.close()
-            
+
 def t3Progress(arglist):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -466,6 +466,22 @@ def t3Progress(arglist):
         print("------------------------\n")
         conn.close()
 
+def t3ClearCompleted(arglist):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM tasks WHERE completed = 1")
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        print("\nNo completed tasks to clear.")
+    else:
+        cursor.execute("DELETE FROM tasks WHERE completed = 1")
+        conn.commit()
+        print(f"\nSuccessfully cleared {count} completed task(s) from the database.")
+
+        conn.close()
+
 def _main():
 
     """Run the CLI Interface for T3"""
@@ -481,6 +497,12 @@ def _main():
     parser.add_argument("--start", help="Starts timing of Project, will overwrite existing tracked time if project is already being tracked",action='store_true',default=False,dest='startValue')
     parser.add_argument("--stop/finish", help="Stops timing of Project, updates total run time", action='store_true',default=False,dest="stopValue")
     parser.add_argument("--edit", help="Edits the time spent on a Project (in minutes)", action='store_true',default=False,dest="editValue")
+    parser.add_argument("--summary", action='store_true', default=False, dest='summaryValue')
+    parser.add_argument("--pending", action='store_true', default=False, dest='pendingValue')
+    parser.add_argument("--search", action='store_true', default=False, dest='searchValue')
+    parser.add_argument("--running", action='store_true', default=False, dest='runningValue')
+    parser.add_argument("--progress", action='store_true', default=False, dest='progressValue')
+    parser.add_argument("--clear-completed", action='store_true', default=False, dest='clearValue')
     results = parser.parse_args()
 
     print('userParserInput='+str(results.userParserInput))	# pld
@@ -488,7 +510,6 @@ def _main():
     if (results.reportValue) == True:
         t3Report(results.userParserInput)
     if (results.addValue) == True:
-        #t3Add(results.userParserInput)
         t3Add(results.userParserInput)
     if (results.completeValue) == True:
         t3Complete(results.userParserInput)
@@ -500,6 +521,18 @@ def _main():
         t3Start(results.userParserInput)
     if (results.stopValue) == True:
         t3Stop(results.userParserInput)
+    if (results.summaryValue) == True:
+        t3Summary(results.userParserInput)
+    if (results.pendingValue) == True:
+        t3Pending(results.userParserInput)
+    if (results.searchValue) == True:
+        t3Search(results.userParserInput)
+    if (results.runningValue) == True:
+        t3Running(results.userParserInput)
+    if (results.progressValue) == True:
+        t3Progress(results.userParserInput)
+    if (results.clearValue) == True:
+        t3ClearCompleted(results.userParserInput)
 
 if __name__ == '__main__':
     _main()
