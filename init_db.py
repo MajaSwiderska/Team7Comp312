@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 )
 """)
 
+cursor.execute("PRAGMA table_info(tasks)")
+columns = [row[1] for row in cursor.fetchall()]
+
+if "tags" not in columns:
+    cursor.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
+
 
 
 conn.commit()
