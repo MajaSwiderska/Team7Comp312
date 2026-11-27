@@ -3,7 +3,6 @@ import argparse
 import time
 import datetime
 import os
-import json
 import sqlite3
 
 """time tracker and to do list, T3. Todo list where you can add your tasks, keep track of how long you have been working on them, and save your output to a text file for additional scripting"""
@@ -14,20 +13,255 @@ def get_db_connection():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+# ---------------------------------------------------------------------------
+# Zubair: --complete, --delete, --start, --stop (and --reopen), using SQLite.
+# Time is stored in MINUTES so it matches --summary, --edit and --running.
+# ---------------------------------------------------------------------------
+
+def _get_project_id(cursor, project_name):
+    """Return the id of the project with this name, or None."""
+    cursor.execute("SELECT id FROM projects WHERE name = ?", (project_name,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def _get_tasks(cursor, project_id, task_names=None):
+    """Return {task_name: (id, time_spent, time_stamp, completed)}.
+
+    With task_names, only those tasks are returned, plus a list of the
+    names that were not found. Without it, every task in the project.
+    """
+    cursor.execute(
+        "SELECT name, id, time_spent, time_stamp, completed "
+        "FROM tasks WHERE project_id = ?",
+        (project_id,)
+    )
+    all_tasks = {row[0]: row[1:] for row in cursor.fetchall()}
+    if not task_names:
+        return all_tasks, []
+    found = {n: all_tasks[n] for n in task_names if n in all_tasks}
+    missing = [n for n in task_names if n not in all_tasks]
+    return found, missing
+
+
+def _resolve(cursor, arglist, usage):
+    """Shared input checks for my commands.
+
+    Returns (project_id, tasks_dict) or None after printing an error.
+    Nothing is changed in the database if any name is wrong.
+    """
+    if not arglist:
+        print(f"Error: project name required. Usage: {usage}")
+        return None
+    project_name, task_names = arglist[0], arglist[1:]
+    project_id = _get_project_id(cursor, project_name)
+    if project_id is None:
+        print(f"Error: project '{project_name}' not found.")
+        return None
+    tasks, missing = _get_tasks(cursor, project_id, task_names)
+    if missing:
+        print(f"Error: task(s) not found in '{project_name}': "
+              + ", ".join(missing) + ". No changes made.")
+        return None
+    return project_id, tasks
+
+
+def _is_running(time_stamp):
+    return time_stamp is not None and time_stamp != 0
+
+
+def _elapsed_minutes(time_stamp):
+    return round((time.time() - float(time_stamp)) / 60, 2)
+
+
 def t3Complete(arglist):
-    #t3 --complete 'activity'
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    data = json.loads(jsonData) 
-    projectName = arglist[0]
+    # t3 --complete projectName [task1 task2 ...]
+    # No task names = complete every task in the project.
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        found = _resolve(cursor, arglist, "t3 --complete project [task ...]")
+        if found is None:
+            return False
+        _, tasks = found
+        if not tasks:
+            print(f"Project '{arglist[0]}' has no tasks to complete.")
+            return False
+        for name, (task_id, spent, stamp, done) in tasks.items():
+            if done:
+                print(f"Task '{name}' is already completed.")
+                continue
+            if _is_running(stamp):
+                # Finishing a task also stops its timer, so the time is kept.
+                spent = (spent or 0) + _elapsed_minutes(stamp)
+                print(f"Stopped running timer on '{name}'.")
+            cursor.execute(
+                "UPDATE tasks SET completed = 1, time_stamp = NULL, "
+                "time_spent = ? WHERE id = ?",
+                (round(spent or 0, 2), task_id)
+            )
+            print(f"Completed task '{name}' in project '{arglist[0]}'.")
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"Database error, no changes made: {e}")
+        return False
+    finally:
+        conn.close()
 
-    for k in data:
-        if projectName == k['projectName']:
-            k['completed'] = True
 
-    with open('tasks/tasks.json', 'w') as f:
-        json.dump(data, f)
+def t3Reopen(arglist):
+    # t3 --reopen projectName [task1 task2 ...]
+    # Opposite of --complete: marks tasks as not completed again.
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        found = _resolve(cursor, arglist, "t3 --reopen project [task ...]")
+        if found is None:
+            return False
+        _, tasks = found
+        for name, (task_id, _, _, done) in tasks.items():
+            if not done:
+                print(f"Task '{name}' is not completed.")
+                continue
+            cursor.execute("UPDATE tasks SET completed = 0 WHERE id = ?",
+                           (task_id,))
+            print(f"Reopened task '{name}' in project '{arglist[0]}'.")
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"Database error, no changes made: {e}")
+        return False
+    finally:
+        conn.close()
 
+
+def t3Delete(arglist, assume_yes=False):
+    # t3 --delete projectName            -> delete project and all its tasks
+    # t3 --delete projectName task1 ...  -> delete only those tasks
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        found = _resolve(cursor, arglist, "t3 --delete project [task ...]")
+        if found is None:
+            return False
+        project_id, tasks = found
+        if len(arglist) > 1:
+            for name, (task_id, *_rest) in tasks.items():
+                cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+                print(f"Deleted task '{name}' from project '{arglist[0]}'.")
+        else:
+            if not assume_yes:
+                try:
+                    answer = input(f"Delete project '{arglist[0]}' and its "
+                                   f"{len(tasks)} task(s)? [y/N] ")
+                except EOFError:
+                    answer = ""
+                if answer.strip().lower() not in ("y", "yes"):
+                    print("Cancelled. Nothing deleted.")
+                    return False
+            # Tasks first: the foreign key does not allow orphan tasks.
+            cursor.execute("DELETE FROM tasks WHERE project_id = ?",
+                           (project_id,))
+            cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            print(f"Deleted project '{arglist[0]}' and its "
+                  f"{len(tasks)} task(s).")
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"Database error, no changes made: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def _pick_one_task(arglist, tasks, command):
+    """--start needs exactly one task. If the project has only one task
+    (for example the default 'maintask'), use it."""
+    if len(arglist) > 2:
+        print(f"Error: {command} takes one task at a time.")
+        return None
+    if len(arglist) == 2:
+        return arglist[1]
+    if len(tasks) == 1:
+        return next(iter(tasks))
+    if not tasks:
+        print(f"Error: project '{arglist[0]}' has no tasks.")
+    else:
+        print(f"Error: project '{arglist[0]}' has several tasks, name one: "
+              + ", ".join(tasks))
+    return None
+
+
+def t3Start(arglist):
+    # t3 --start projectName [task]
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        found = _resolve(cursor, arglist, "t3 --start project [task]")
+        if found is None:
+            return False
+        _, tasks = found
+        name = _pick_one_task(arglist, tasks, "--start")
+        if name is None:
+            return False
+        task_id, _, stamp, done = tasks[name]
+        if done:
+            print(f"Error: task '{name}' is completed. "
+                  f"Use --reopen first to track more time.")
+            return False
+        if _is_running(stamp):
+            print(f"Timer for '{name}' is already running "
+                  f"({_elapsed_minutes(stamp)} minutes so far).")
+            return False
+        cursor.execute("UPDATE tasks SET time_stamp = ? WHERE id = ?",
+                       (time.time(), task_id))
+        conn.commit()
+        print(f"Started timer for '{name}' in project '{arglist[0]}'.")
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"Database error, no changes made: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def t3Stop(arglist):
+    # t3 --stop projectName [task]
+    # Without a task name, stops every running timer in the project.
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        found = _resolve(cursor, arglist, "t3 --stop project [task]")
+        if found is None:
+            return False
+        _, tasks = found
+        running = {n: t for n, t in tasks.items() if _is_running(t[2])}
+        if not running:
+            print("No running timer to stop. Use --start first.")
+            return False
+        for name, (task_id, spent, stamp, _) in running.items():
+            session = _elapsed_minutes(stamp)
+            total = round((spent or 0) + session, 2)
+            cursor.execute(
+                "UPDATE tasks SET time_spent = ?, time_stamp = NULL "
+                "WHERE id = ?",
+                (total, task_id)
+            )
+            print(f"Stopped '{name}': {session} minutes this session, "
+                  f"{total} minutes total.")
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"Database error, no changes made: {e}")
+        return False
+    finally:
+        conn.close()
 
 def t3Report(arglist):
     # t3 --report active/completed/all
@@ -121,13 +355,6 @@ def t3Report(arglist):
 
     conn.close()
 
-# pld: returns (num_tasks_completed, num_tasks_total)
-def completecount(tasklist):
-    ccount = 0
-    for t in tasklist:
-        if t['completed']: ccount += 1
-    return (ccount, len(tasklist))
-
 # format of arglist: [projectName, taskname1, taskname2, ...]
 # for existing projects, the new task(s) are added.
 def t3Add(arglist):
@@ -206,46 +433,6 @@ def t3Add(arglist):
     conn.commit()
     conn.close()
 
-# returns the (first) task in tlist with name equal to string tname, or None if not found
-
-def findtask(tname, tlist):
-   for t in tlist:
-       if tname == t['taskName']: return t
-   return None
-
-# this is for debugging -- pld
-def dumpdict(d):
-   for k in d:
-      print ('({}->{})'.format(k, d[k]))
-   print
-
-def dumpprojects(d):
-   for proj in d:
-      print ('{}: '.format(proj))
-      for task in d[proj]:
-         print('      {}'.format(str(task)))
-      print
-
-def t3Delete(arglist):
-    #t3 --delete 'activity'
-    #removes activity when finished
-    projectName=arglist[0]
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    data = json.loads(jsonData) 
-    list1=[]
-    for k in data:
-        #print(type(k))
-        if k['projectName'] == projectName:
-            print("Found Project. Deleting.")
-        else:
-            list1.append(k)
-    #print(list1)
-
-    with open('tasks/tasks.json', 'w') as file:
-                file.write(json.dumps(list1))
-
-
 def t3Edit(arglist):
     #t3 --edit 'projectName'
     #needs to be able to check that user input the correct format
@@ -295,44 +482,102 @@ def t3Edit(arglist):
     conn.close()
 
 
-def t3Start(arglist):
-    #t3 --start 'projectName'
-    projectName = arglist[0]
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    data = json.loads(jsonData)
+# ---------------------------------------------------------------------------
+# Zubair: extra features --due-soon and --export
+# ---------------------------------------------------------------------------
 
-    for k in data:
-        if projectName == k['projectName']:
-            print("Project Time Has Started")
-            #currentTime = datetime.datetime.now().strftime('%H%M')
-            k['timeStamp'] = time.time()
-    with open('tasks/tasks.json', 'w') as f:
-        json.dump(data, f)
+def t3DueSoon(arglist):
+    # t3 --due-soon [days]   (default 7)
+    # Lists unfinished tasks that are overdue or due within the next N days.
+    # Due dates are set with --edit in the form YYYY-MM-DD.
+    days = 7
+    if arglist:
+        try:
+            days = int(arglist[0])
+            if days < 0:
+                raise ValueError
+        except ValueError:
+            print("Error: days must be a whole number, e.g. t3 --due-soon 3")
+            return False
 
-def t3Stop(arglist):
-    #t3 -- stop 'projectName'
-    projectName = arglist[0]
-    inputFile = 'tasks/tasks.json'
-    jsonData=open(inputFile).read()
-    data = json.loads(jsonData)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.due_date, tasks.priority
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.completed = 0
+          AND tasks.due_date IS NOT NULL AND tasks.due_date != ''
+    """)
+    rows = cursor.fetchall()
+    conn.close()
 
-    for k in data:
-        if projectName == k['projectName']:
-            #check to make sure there is a timestamp
-            if k['timeStamp'] == '':
-                print("Project has no start time, is not being tracked")
-                break
-            print("Project Time Has Stopped, Tracked Time Updated")
-            elapsedTime = time.time() - k['timeStamp']
-            #add new time to current overall project time
-            currentProjectTime = k['timeSpent']
-            overallProjectTime = currentProjectTime + elapsedTime
-            k['timeSpent'] = overallProjectTime
-            k['timeStamp'] = ''
-            print("Total Project Worktime: " + time.strftime("%H:%M:%S", time.gmtime(overallProjectTime)))
-    with open('tasks/tasks.json', 'w') as f:
-        json.dump(data, f)
+    today = datetime.date.today()
+    due, unreadable = [], []
+    for project, task, due_text, priority in rows:
+        try:
+            due_date = datetime.date.fromisoformat(due_text.strip())
+        except ValueError:
+            unreadable.append(f"{project}/{task} ('{due_text}')")
+            continue
+        days_left = (due_date - today).days
+        if days_left <= days:
+            due.append((days_left, project, task, due_date, priority))
+
+    print(f"\n--- Tasks Due In The Next {days} Day(s) ---")
+    if not due:
+        print("Nothing due. Nice.")
+    for days_left, project, task, due_date, priority in sorted(due):
+        if days_left < 0:
+            when = f"OVERDUE by {-days_left} day(s)"
+        elif days_left == 0:
+            when = "due TODAY"
+        else:
+            when = f"due in {days_left} day(s)"
+        print(f"Project: {project} | Task: {task} | {due_date} | "
+              f"{when} | Priority: {priority}")
+    if unreadable:
+        print("Skipped (due date not in YYYY-MM-DD form): "
+              + ", ".join(unreadable))
+    print("------------------------------------------\n")
+    return True
+
+
+def t3Export(arglist):
+    # t3 --export [filename.csv]   (default t3_export.csv)
+    # Saves every task to a CSV file that opens in Excel or Google Sheets.
+    import csv
+    filename = arglist[0] if arglist else "t3_export.csv"
+    if not filename.lower().endswith(".csv"):
+        filename += ".csv"
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.time_spent, tasks.completed,
+               tasks.priority, tasks.due_date, tasks.tags
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        ORDER BY projects.name, tasks.name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    try:
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Project", "Task", "Minutes Spent", "Status",
+                             "Priority", "Due Date", "Tags"])
+            for project, task, spent, done, priority, due, tags in rows:
+                writer.writerow([project, task, round(spent or 0, 2),
+                                 "completed" if done else "pending",
+                                 priority or "", due or "", tags or ""])
+    except OSError as e:
+        print(f"Error: could not write {filename}: {e}")
+        return False
+    print(f"Exported {len(rows)} task(s) to {filename}")
+    return True
+
 
 # Maja Swiderska functions add
 def t3Summary(arglist):
@@ -491,21 +736,23 @@ def _main():
     parser.add_argument('userParserInput', nargs='*', help="the user input, will be printed if there are no arguments")
     
     parser.add_argument("--add",help="Adds a Project to your list",action='store_true', default=False, dest='addValue')
-    parser.add_argument("--complete",help="Marks project on list as completed",action="store_true",default=False,dest="completeValue")
-    parser.add_argument("--delete", help="Removes Project from list",action='store_true',default=False,dest='deleteValue')
+    parser.add_argument("--complete",help="Marks task(s) done: t3 --complete project [task ...] (no task = whole project)",action="store_true",default=False,dest="completeValue")
+    parser.add_argument("--delete", help="Deletes task(s), or the whole project if no task is given (asks first)",action='store_true',default=False,dest='deleteValue')
     parser.add_argument("--report", help="Prints out basic report. Options: active/all/completed  (default=active)",action='store_true', default=False, dest='reportValue',)
-    parser.add_argument("--start", help="Starts timing of Project, will overwrite existing tracked time if project is already being tracked",action='store_true',default=False,dest='startValue')
-    parser.add_argument("--stop/finish", help="Stops timing of Project, updates total run time", action='store_true',default=False,dest="stopValue")
+    parser.add_argument("--start", help="Starts timing a task: t3 --start project [task]",action='store_true',default=False,dest='startValue')
+    parser.add_argument("--stop", "--finish", help="Stops timing of a task, adds elapsed minutes to its total", action='store_true',default=False,dest="stopValue")
+    parser.add_argument("--reopen", help="Marks completed task(s) as not completed again", action='store_true',default=False,dest="reopenValue")
     parser.add_argument("--edit", help="Edits the time spent on a Project (in minutes)", action='store_true',default=False,dest="editValue")
     parser.add_argument("--summary", action='store_true', default=False, dest='summaryValue')
     parser.add_argument("--pending", action='store_true', default=False, dest='pendingValue')
     parser.add_argument("--search", action='store_true', default=False, dest='searchValue')
     parser.add_argument("--running", action='store_true', default=False, dest='runningValue')
     parser.add_argument("--progress", action='store_true', default=False, dest='progressValue')
+    parser.add_argument("--due-soon", help="Lists unfinished tasks due within N days (default 7), including overdue", action='store_true', default=False, dest='dueSoonValue')
+    parser.add_argument("--export", help="Saves all tasks to a CSV file (default t3_export.csv)", action='store_true', default=False, dest='exportValue')
+    parser.add_argument("-y", "--yes", help="Skip the confirmation question when deleting a whole project", action='store_true', default=False, dest='yesValue')
     parser.add_argument("--clear-completed", action='store_true', default=False, dest='clearValue')
     results = parser.parse_args()
-
-    print('userParserInput='+str(results.userParserInput))	# pld
 
     if (results.reportValue) == True:
         t3Report(results.userParserInput)
@@ -514,13 +761,15 @@ def _main():
     if (results.completeValue) == True:
         t3Complete(results.userParserInput)
     if (results.deleteValue) == True:
-        t3Delete(results.userParserInput)
+        t3Delete(results.userParserInput, assume_yes=results.yesValue)
     if (results.editValue) == True:
         t3Edit(results.userParserInput)
     if (results.startValue) == True:
         t3Start(results.userParserInput)
     if (results.stopValue) == True:
         t3Stop(results.userParserInput)
+    if (results.reopenValue) == True:
+        t3Reopen(results.userParserInput)
     if (results.summaryValue) == True:
         t3Summary(results.userParserInput)
     if (results.pendingValue) == True:
@@ -531,6 +780,10 @@ def _main():
         t3Running(results.userParserInput)
     if (results.progressValue) == True:
         t3Progress(results.userParserInput)
+    if (results.dueSoonValue) == True:
+        t3DueSoon(results.userParserInput)
+    if (results.exportValue) == True:
+        t3Export(results.userParserInput)
     if (results.clearValue) == True:
         t3ClearCompleted(results.userParserInput)
 
