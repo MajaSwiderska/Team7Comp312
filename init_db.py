@@ -47,6 +47,19 @@ def create_schema(conn):
     if "tags" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
 
+    # Zubair: one row per timed work session (filled by --stop), used by
+    # --timesheet. Sessions are removed automatically with their task.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        start REAL NOT NULL,
+        end REAL NOT NULL,
+        minutes REAL NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+    """)
+
     # Imad: a task name can only be used once per project.
     cursor.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS unique_project_task on tasks(project_id,name)

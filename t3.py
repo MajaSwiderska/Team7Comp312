@@ -77,6 +77,24 @@ def _elapsed_minutes(time_stamp):
     return round((time.time() - float(time_stamp)) / 60, 2)
 
 
+def _log_session(cursor, task_id, stamp, minutes):
+    """Record one finished work session for --timesheet."""
+    cursor.execute(
+        "INSERT INTO sessions (task_id, start, end, minutes) "
+        "VALUES (?, ?, ?, ?)",
+        (task_id, float(stamp), time.time(), minutes)
+    )
+
+
+def format_minutes(minutes):
+    """90.5 -> '1h 30m', 45 -> '45m'."""
+    total = int(round(minutes or 0))
+    hours, mins = divmod(total, 60)
+    if hours:
+        return f"{hours}h {mins:02d}m"
+    return f"{mins}m"
+
+
 def t3Complete(arglist):
     # t3 --complete projectName [task1 task2 ...]
     # No task names = complete every task in the project.
@@ -96,7 +114,9 @@ def t3Complete(arglist):
                 continue
             if _is_running(stamp):
                 # Finishing a task also stops its timer, so the time is kept.
-                spent = (spent or 0) + _elapsed_minutes(stamp)
+                session = _elapsed_minutes(stamp)
+                spent = (spent or 0) + session
+                _log_session(cursor, task_id, stamp, session)
                 print(f"Stopped running timer on '{name}'.")
             cursor.execute(
                 "UPDATE tasks SET completed = 1, time_stamp = NULL, "
@@ -255,6 +275,7 @@ def t3Stop(arglist):
                 "WHERE id = ?",
                 (total, task_id)
             )
+            _log_session(cursor, task_id, stamp, session)
             print(f"Stopped '{name}': {session} minutes this session, "
                   f"{total} minutes total.")
         conn.commit()
@@ -464,6 +485,106 @@ def t3Edit(arglist):
 # ---------------------------------------------------------------------------
 # Zubair: extra features --due-soon and --export
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Zubair: --timesheet  (hours per project per day, like a consultant's
+# weekly timesheet). Built from the sessions logged by --stop/--complete.
+# ---------------------------------------------------------------------------
+
+def t3Timesheet(arglist):
+    # t3 --timesheet                 -> last 7 days, all projects
+    # t3 --timesheet today
+    # t3 --timesheet 30              -> last 30 days
+    # t3 --timesheet week Website    -> only one project
+    period = arglist[0].lower() if arglist else "week"
+    project_filter = arglist[1] if len(arglist) > 1 else None
+    if period == "today":
+        days = 1
+    elif period == "week":
+        days = 7
+    else:
+        try:
+            days = int(period)
+            if days < 1:
+                raise ValueError
+        except ValueError:
+            print("Error: use t3 --timesheet [today|week|N] [project]")
+            return False
+
+    today = datetime.date.today()
+    first_day = today - datetime.timedelta(days=days - 1)
+    start_of_range = time.mktime(first_day.timetuple())
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT projects.name, sessions.start, sessions.minutes
+        FROM sessions
+        JOIN tasks ON sessions.task_id = tasks.id
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE sessions.start >= ?
+    """
+    params = [start_of_range]
+    if project_filter:
+        query += " AND projects.name = ?"
+        params.append(project_filter)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    cursor.execute("SELECT COUNT(*) FROM tasks WHERE time_stamp IS NOT NULL "
+                   "AND time_stamp != 0")
+    running_count = cursor.fetchone()[0]
+    conn.close()
+
+    # minutes[project][date]
+    minutes = {}
+    for project, start, mins in rows:
+        day = datetime.date.fromtimestamp(start)
+        minutes.setdefault(project, {})
+        minutes[project][day] = minutes[project].get(day, 0) + mins
+
+    title = "Today" if days == 1 else f"Last {days} Days"
+    if project_filter:
+        title += f" - {project_filter}"
+    print(f"\n--- Timesheet: {title} "
+          f"({first_day:%b %d} to {today:%b %d}) ---")
+    if not minutes:
+        print("No time logged in this period. "
+              "Use --start and --stop to track time.")
+        print("------------------------------------------\n")
+        return True
+
+    # Only show days that have time logged, oldest first, so the table
+    # stays narrow enough for a terminal.
+    all_days = sorted({d for p in minutes.values() for d in p})
+    name_width = max(10, max(len(p) for p in minutes))
+    header = "Project".ljust(name_width) + "".join(
+        f"{d:%a %m/%d}".rjust(11) for d in all_days) + "Total".rjust(10)
+    print(header)
+    print("-" * len(header))
+
+    grand_total = 0
+    for project in sorted(minutes):
+        line = project.ljust(name_width)
+        project_total = 0
+        for d in all_days:
+            m = minutes[project].get(d, 0)
+            project_total += m
+            line += (format_minutes(m) if m else "-").rjust(11)
+        grand_total += project_total
+        print(line + format_minutes(project_total).rjust(10))
+
+    print("-" * len(header))
+    totals = "Total".ljust(name_width)
+    for d in all_days:
+        day_total = sum(p.get(d, 0) for p in minutes.values())
+        totals += format_minutes(day_total).rjust(11)
+    print(totals + format_minutes(grand_total).rjust(10))
+    if running_count:
+        print(f"({running_count} timer(s) still running; "
+              f"their time appears after --stop.)")
+    print("------------------------------------------\n")
+    return True
+
 
 def t3DueSoon(arglist):
     # t3 --due-soon [days]   (default 7)
@@ -730,6 +851,7 @@ def _main():
     parser.add_argument("--search", action='store_true', default=False, dest='searchValue')
     parser.add_argument("--running", action='store_true', default=False, dest='runningValue')
     parser.add_argument("--progress", action='store_true', default=False, dest='progressValue')
+    parser.add_argument("--timesheet", help="Hours per project per day: t3 --timesheet [today|week|N days] [project]", action='store_true', default=False, dest='timesheetValue')
     parser.add_argument("--due-soon", help="Lists unfinished tasks due within N days (default 7), including overdue", action='store_true', default=False, dest='dueSoonValue')
     parser.add_argument("--export", help="Saves all tasks to a CSV file (default t3_export.csv)", action='store_true', default=False, dest='exportValue')
     parser.add_argument("-y", "--yes", help="Skip the confirmation question when deleting a whole project", action='store_true', default=False, dest='yesValue')
@@ -762,6 +884,8 @@ def _main():
         t3Running(results.userParserInput)
     if (results.progressValue) == True:
         t3Progress(results.userParserInput)
+    if (results.timesheetValue) == True:
+        t3Timesheet(results.userParserInput)
     if (results.dueSoonValue) == True:
         t3DueSoon(results.userParserInput)
     if (results.exportValue) == True:
