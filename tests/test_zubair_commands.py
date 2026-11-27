@@ -29,11 +29,17 @@ class CommandTests(unittest.TestCase):
         self.old_cwd = os.getcwd()
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
-        runpy.run_path(os.path.join(REPO, "init_db.py"))
+        self.old_env = os.environ.get("T3_DB")
+        os.environ["T3_DB"] = os.path.join(self.tmp.name, "t3.db")
+        runpy.run_path(os.path.join(REPO, "init_db.py"), run_name="__main__")
         self.run_cmd(t3.t3Add, ["Study", "Read", "Write", "Review"])
         self.run_cmd(t3.t3Add, ["Gym"])  # gets the default 'maintask'
 
     def tearDown(self):
+        if self.old_env is None:
+            os.environ.pop("T3_DB", None)
+        else:
+            os.environ["T3_DB"] = self.old_env
         os.chdir(self.old_cwd)
         self.tmp.cleanup()
 
@@ -272,6 +278,35 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(rows[0][0], "Project")
         self.assertEqual(len(rows), 1 + 4)
         self.assertIn(["Study", "Read", "0", "completed", "normal", "", ""], rows)
+
+    # data location / automatic setup ---------------------------------------
+    def test_works_from_another_folder(self):
+        other = os.path.join(self.tmp.name, "somewhere", "else")
+        os.makedirs(other)
+        p = subprocess.run([sys.executable, os.path.join(REPO, "t3.py"),
+                            "--report", "all"], cwd=other,
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Study", p.stdout)
+        self.assertFalse(os.path.exists(os.path.join(other, "t3.db")))
+
+    def test_creates_database_automatically(self):
+        os.environ["T3_DB"] = os.path.join(self.tmp.name, "new", "fresh.db")
+        self.assertTrue(self.run_cmd(t3.t3Complete, ["x"]) is False)
+        self.run_cmd(t3.t3Add, ["Fresh", "One"])
+        self.assertTrue(os.path.exists(os.environ["T3_DB"]))
+
+    def test_default_location_is_home_folder(self):
+        os.environ.pop("T3_DB")
+        fake_home = os.path.join(self.tmp.name, "home")
+        with mock.patch("os.path.expanduser", return_value=fake_home):
+            self.assertEqual(t3.init_db.db_path(),
+                             os.path.join(fake_home, ".t3", "t3.db"))
+
+    def test_help_shows_data_file(self):
+        p = subprocess.run([sys.executable, os.path.join(REPO, "t3.py"),
+                            "--help"], capture_output=True, text=True)
+        self.assertIn("Data file:", p.stdout)
 
 
 if __name__ == "__main__":
