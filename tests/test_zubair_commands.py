@@ -1,4 +1,4 @@
-"""Tests for --complete, --delete, --start, --stop and --reopen.
+"""Tests for --complete, --delete, --start, --stop, --reopen, --due-soon, --export.
 
 Run from the repository folder:
     python -m unittest tests/test_zubair_commands.py -v
@@ -121,7 +121,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("Study", self.projects())
 
     def test_delete_project_removes_its_tasks_only(self):
-        self.assertTrue(self.run_cmd(t3.t3Delete, ["Study"]))
+        self.assertTrue(self.run_cmd(lambda a: t3.t3Delete(a, assume_yes=True), ["Study"]))
         self.assertEqual(self.projects(), ["Gym"])
         self.assertEqual([r[0] for r in self.rows()], ["Gym"])
 
@@ -203,13 +203,75 @@ class CommandTests(unittest.TestCase):
     def test_command_line(self):
         script = os.path.join(REPO, "t3.py")
         for args in (["--start", "Study", "Read"], ["--stop", "Study", "Read"],
-                     ["--complete", "Study", "Read"], ["--delete", "Gym"]):
+                     ["--complete", "Study", "Read"], ["--delete", "Gym", "--yes"]):
             p = subprocess.run([sys.executable, script] + args,
                                capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertNotIn("Traceback", p.stderr)
         self.assertEqual(self.task("Study", "Read")["done"], 1)
         self.assertEqual(self.projects(), ["Study"])
+
+    # delete confirmation ---------------------------------------------------
+    def test_delete_project_asks_and_no_cancels(self):
+        with mock.patch("builtins.input", return_value="n"):
+            self.assertFalse(self.run_cmd(t3.t3Delete, ["Study"]))
+        self.assertIn("Cancelled", self.output)
+        self.assertIn("Study", self.projects())
+
+    def test_delete_project_asks_and_yes_deletes(self):
+        with mock.patch("builtins.input", return_value="y"):
+            self.assertTrue(self.run_cmd(t3.t3Delete, ["Study"]))
+        self.assertEqual(self.projects(), ["Gym"])
+
+    def test_command_line_delete_without_yes_is_safe(self):
+        p = subprocess.run([sys.executable, os.path.join(REPO, "t3.py"),
+                            "--delete", "Gym"], input="",
+                           capture_output=True, text=True)
+        self.assertIn("Cancelled", p.stdout)
+        self.assertIn("Gym", self.projects())
+
+    # --due-soon ------------------------------------------------------------
+    def set_due(self, task, value):
+        conn = sqlite3.connect("t3.db")
+        conn.execute("UPDATE tasks SET due_date = ? WHERE name = ?", (value, task))
+        conn.commit()
+        conn.close()
+
+    def test_due_soon(self):
+        import datetime
+        today = datetime.date.today()
+        self.set_due("Read", str(today - datetime.timedelta(days=2)))
+        self.set_due("Write", str(today + datetime.timedelta(days=3)))
+        self.set_due("Review", str(today + datetime.timedelta(days=30)))
+        self.set_due("maintask", "next friday")
+        self.assertTrue(self.run_cmd(t3.t3DueSoon, ["7"]))
+        self.assertIn("Read", self.output)
+        self.assertIn("OVERDUE by 2", self.output)
+        self.assertIn("due in 3", self.output)
+        self.assertNotIn("Review", self.output)
+        self.assertIn("next friday", self.output)  # reported as skipped
+        self.assertLess(self.output.index("Read"), self.output.index("Write"))
+
+    def test_due_soon_skips_completed(self):
+        import datetime
+        self.set_due("Read", str(datetime.date.today()))
+        self.run_cmd(t3.t3Complete, ["Study", "Read"])
+        self.run_cmd(t3.t3DueSoon, [])
+        self.assertIn("Nothing due", self.output)
+
+    def test_due_soon_bad_number(self):
+        self.assertFalse(self.run_cmd(t3.t3DueSoon, ["abc"]))
+
+    # --export --------------------------------------------------------------
+    def test_export_csv(self):
+        import csv
+        self.run_cmd(t3.t3Complete, ["Study", "Read"])
+        self.assertTrue(self.run_cmd(t3.t3Export, ["out"]))
+        with open("out.csv", newline="") as f:
+            rows = list(csv.reader(f))
+        self.assertEqual(rows[0][0], "Project")
+        self.assertEqual(len(rows), 1 + 4)
+        self.assertIn(["Study", "Read", "0", "completed", "normal", "", ""], rows)
 
 
 if __name__ == "__main__":

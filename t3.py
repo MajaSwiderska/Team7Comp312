@@ -3,7 +3,6 @@ import argparse
 import time
 import datetime
 import os
-import json
 import sqlite3
 
 """time tracker and to do list, T3. Todo list where you can add your tasks, keep track of how long you have been working on them, and save your output to a text file for additional scripting"""
@@ -139,7 +138,7 @@ def t3Reopen(arglist):
         conn.close()
 
 
-def t3Delete(arglist):
+def t3Delete(arglist, assume_yes=False):
     # t3 --delete projectName            -> delete project and all its tasks
     # t3 --delete projectName task1 ...  -> delete only those tasks
     conn = get_db_connection()
@@ -154,6 +153,15 @@ def t3Delete(arglist):
                 cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
                 print(f"Deleted task '{name}' from project '{arglist[0]}'.")
         else:
+            if not assume_yes:
+                try:
+                    answer = input(f"Delete project '{arglist[0]}' and its "
+                                   f"{len(tasks)} task(s)? [y/N] ")
+                except EOFError:
+                    answer = ""
+                if answer.strip().lower() not in ("y", "yes"):
+                    print("Cancelled. Nothing deleted.")
+                    return False
             # Tasks first: the foreign key does not allow orphan tasks.
             cursor.execute("DELETE FROM tasks WHERE project_id = ?",
                            (project_id,))
@@ -347,13 +355,6 @@ def t3Report(arglist):
 
     conn.close()
 
-# pld: returns (num_tasks_completed, num_tasks_total)
-def completecount(tasklist):
-    ccount = 0
-    for t in tasklist:
-        if t['completed']: ccount += 1
-    return (ccount, len(tasklist))
-
 # format of arglist: [projectName, taskname1, taskname2, ...]
 # for existing projects, the new task(s) are added.
 def t3Add(arglist):
@@ -432,26 +433,6 @@ def t3Add(arglist):
     conn.commit()
     conn.close()
 
-# returns the (first) task in tlist with name equal to string tname, or None if not found
-
-def findtask(tname, tlist):
-   for t in tlist:
-       if tname == t['taskName']: return t
-   return None
-
-# this is for debugging -- pld
-def dumpdict(d):
-   for k in d:
-      print ('({}->{})'.format(k, d[k]))
-   print
-
-def dumpprojects(d):
-   for proj in d:
-      print ('{}: '.format(proj))
-      for task in d[proj]:
-         print('      {}'.format(str(task)))
-      print
-
 def t3Edit(arglist):
     #t3 --edit 'projectName'
     #needs to be able to check that user input the correct format
@@ -499,6 +480,103 @@ def t3Edit(arglist):
     conn.commit()
     print("Task updated successfully")
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Zubair: extra features --due-soon and --export
+# ---------------------------------------------------------------------------
+
+def t3DueSoon(arglist):
+    # t3 --due-soon [days]   (default 7)
+    # Lists unfinished tasks that are overdue or due within the next N days.
+    # Due dates are set with --edit in the form YYYY-MM-DD.
+    days = 7
+    if arglist:
+        try:
+            days = int(arglist[0])
+            if days < 0:
+                raise ValueError
+        except ValueError:
+            print("Error: days must be a whole number, e.g. t3 --due-soon 3")
+            return False
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.due_date, tasks.priority
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.completed = 0
+          AND tasks.due_date IS NOT NULL AND tasks.due_date != ''
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    today = datetime.date.today()
+    due, unreadable = [], []
+    for project, task, due_text, priority in rows:
+        try:
+            due_date = datetime.date.fromisoformat(due_text.strip())
+        except ValueError:
+            unreadable.append(f"{project}/{task} ('{due_text}')")
+            continue
+        days_left = (due_date - today).days
+        if days_left <= days:
+            due.append((days_left, project, task, due_date, priority))
+
+    print(f"\n--- Tasks Due In The Next {days} Day(s) ---")
+    if not due:
+        print("Nothing due. Nice.")
+    for days_left, project, task, due_date, priority in sorted(due):
+        if days_left < 0:
+            when = f"OVERDUE by {-days_left} day(s)"
+        elif days_left == 0:
+            when = "due TODAY"
+        else:
+            when = f"due in {days_left} day(s)"
+        print(f"Project: {project} | Task: {task} | {due_date} | "
+              f"{when} | Priority: {priority}")
+    if unreadable:
+        print("Skipped (due date not in YYYY-MM-DD form): "
+              + ", ".join(unreadable))
+    print("------------------------------------------\n")
+    return True
+
+
+def t3Export(arglist):
+    # t3 --export [filename.csv]   (default t3_export.csv)
+    # Saves every task to a CSV file that opens in Excel or Google Sheets.
+    import csv
+    filename = arglist[0] if arglist else "t3_export.csv"
+    if not filename.lower().endswith(".csv"):
+        filename += ".csv"
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT projects.name, tasks.name, tasks.time_spent, tasks.completed,
+               tasks.priority, tasks.due_date, tasks.tags
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        ORDER BY projects.name, tasks.name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    try:
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Project", "Task", "Minutes Spent", "Status",
+                             "Priority", "Due Date", "Tags"])
+            for project, task, spent, done, priority, due, tags in rows:
+                writer.writerow([project, task, round(spent or 0, 2),
+                                 "completed" if done else "pending",
+                                 priority or "", due or "", tags or ""])
+    except OSError as e:
+        print(f"Error: could not write {filename}: {e}")
+        return False
+    print(f"Exported {len(rows)} task(s) to {filename}")
+    return True
 
 
 # Maja Swiderska functions add
@@ -658,8 +736,8 @@ def _main():
     parser.add_argument('userParserInput', nargs='*', help="the user input, will be printed if there are no arguments")
     
     parser.add_argument("--add",help="Adds a Project to your list",action='store_true', default=False, dest='addValue')
-    parser.add_argument("--complete",help="Marks project on list as completed",action="store_true",default=False,dest="completeValue")
-    parser.add_argument("--delete", help="Removes Project from list",action='store_true',default=False,dest='deleteValue')
+    parser.add_argument("--complete",help="Marks task(s) done: t3 --complete project [task ...] (no task = whole project)",action="store_true",default=False,dest="completeValue")
+    parser.add_argument("--delete", help="Deletes task(s), or the whole project if no task is given (asks first)",action='store_true',default=False,dest='deleteValue')
     parser.add_argument("--report", help="Prints out basic report. Options: active/all/completed  (default=active)",action='store_true', default=False, dest='reportValue',)
     parser.add_argument("--start", help="Starts timing a task: t3 --start project [task]",action='store_true',default=False,dest='startValue')
     parser.add_argument("--stop", "--finish", help="Stops timing of a task, adds elapsed minutes to its total", action='store_true',default=False,dest="stopValue")
@@ -670,10 +748,11 @@ def _main():
     parser.add_argument("--search", action='store_true', default=False, dest='searchValue')
     parser.add_argument("--running", action='store_true', default=False, dest='runningValue')
     parser.add_argument("--progress", action='store_true', default=False, dest='progressValue')
+    parser.add_argument("--due-soon", help="Lists unfinished tasks due within N days (default 7), including overdue", action='store_true', default=False, dest='dueSoonValue')
+    parser.add_argument("--export", help="Saves all tasks to a CSV file (default t3_export.csv)", action='store_true', default=False, dest='exportValue')
+    parser.add_argument("-y", "--yes", help="Skip the confirmation question when deleting a whole project", action='store_true', default=False, dest='yesValue')
     parser.add_argument("--clear-completed", action='store_true', default=False, dest='clearValue')
     results = parser.parse_args()
-
-    print('userParserInput='+str(results.userParserInput))	# pld
 
     if (results.reportValue) == True:
         t3Report(results.userParserInput)
@@ -682,7 +761,7 @@ def _main():
     if (results.completeValue) == True:
         t3Complete(results.userParserInput)
     if (results.deleteValue) == True:
-        t3Delete(results.userParserInput)
+        t3Delete(results.userParserInput, assume_yes=results.yesValue)
     if (results.editValue) == True:
         t3Edit(results.userParserInput)
     if (results.startValue) == True:
@@ -701,6 +780,10 @@ def _main():
         t3Running(results.userParserInput)
     if (results.progressValue) == True:
         t3Progress(results.userParserInput)
+    if (results.dueSoonValue) == True:
+        t3DueSoon(results.userParserInput)
+    if (results.exportValue) == True:
+        t3Export(results.userParserInput)
     if (results.clearValue) == True:
         t3ClearCompleted(results.userParserInput)
 
