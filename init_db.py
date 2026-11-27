@@ -7,7 +7,6 @@ import sqlite3
 #   Default:  ~/.t3/t3.db   (Windows: C:\Users\<you>\.t3\t3.db)
 #   Override: set the T3_DB environment variable to another file path.
 
-
 def db_path():
     path = os.environ.get("T3_DB")
     if not path:
@@ -47,6 +46,11 @@ def create_schema(conn):
 
     if "tags" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
+
+    # Imad: a task name can only be used once per project.
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS unique_project_task on tasks(project_id,name)
+    """)
 
     conn.commit()
 

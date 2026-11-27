@@ -1,7 +1,9 @@
 t3.db
 *.db
-t3_export.csv
+*.pyc
 __pycache__/
+_pycache_/
+t3_export.csv
 *.egg-info/
 build/
 .venv/
