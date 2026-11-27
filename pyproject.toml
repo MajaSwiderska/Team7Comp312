@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "t3-tracker"
+version = "0.2.0"
+description = "T3: command-line todo list and time tracker (COMP 312 Team 7)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "License.md" }
+
+[project.scripts]
+# After installing, typing "t3" anywhere runs t3.py's _main().
+t3 = "t3:_main"
+
+[tool.setuptools]
+py-modules = ["t3", "init_db"]
