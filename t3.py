@@ -13,10 +13,9 @@ def get_db_connection():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-# ---------------------------------------------------------------------------
+
 # Zubair: --complete, --delete, --start, --stop (and --reopen), using SQLite.
-# Time is stored in MINUTES so it matches --summary, --edit and --running.
-# ---------------------------------------------------------------------------
+
 
 def _get_project_id(cursor, project_name):
     """Return the id of the project with this name, or None."""
@@ -274,57 +273,33 @@ def t3Report(arglist):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    if user_choice == "all":
+    # Base SQL query
+    query = """
+        SELECT
+            projects.name,
+            tasks.name,
+            tasks.time_spent,
+            tasks.completed
+        FROM tasks
+        JOIN projects
+            ON tasks.project_id = projects.id
+    """
 
-        cursor.execute("""
-            SELECT
-                projects.name,
-                tasks.name,
-                tasks.time_spent,
-                tasks.completed
-            FROM tasks
-            JOIN projects
-                ON tasks.project_id = projects.id
-            ORDER BY projects.name
-        """)
-
-    elif user_choice == "active":
-
-        cursor.execute("""
-            SELECT
-                projects.name,
-                tasks.name,
-                tasks.time_spent,
-                tasks.completed
-            FROM tasks
-            JOIN projects
-                ON tasks.project_id = projects.id
-            WHERE tasks.completed = 0
-            ORDER BY projects.name
-        """)
+    # Apply filter based on user choice
+    if user_choice == "active":
+        query += " WHERE tasks.completed = 0"
 
     elif user_choice == "completed":
+        query += " WHERE tasks.completed = 1"
 
-        cursor.execute("""
-            SELECT
-                projects.name,
-                tasks.name,
-                tasks.time_spent,
-                tasks.completed
-            FROM tasks
-            JOIN projects
-                ON tasks.project_id = projects.id
-            WHERE tasks.completed = 1
-            ORDER BY projects.name
-        """)
-
-    else:
-        print(
-            "Invalid option. "
-            "Choose active/completed/all"
-        )
+    elif user_choice != "all":
+        print("Invalid option. Choose active/completed/all")
         conn.close()
         return
+
+    query += " ORDER BY projects.name"
+
+    cursor.execute(query)
 
     rows = cursor.fetchall()
 
