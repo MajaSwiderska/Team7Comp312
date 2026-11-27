@@ -8,10 +8,14 @@ import sqlite3
 """time tracker and to do list, T3. Todo list where you can add your tasks, keep track of how long you have been working on them, and save your output to a text file for additional scripting"""
 """T3 is to assist those who struggle with time management through a simple, easy to use to do list time tracker """
 
+import init_db
+
+
 def get_db_connection():
-    conn = sqlite3.connect("t3.db")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    # Zubair: the database now lives in one fixed place (~/.t3/t3.db, or the
+    # T3_DB environment variable) and its tables are created automatically,
+    # so t3 works from any folder without running init_db.py first.
+    return init_db.connect()
 
 
 # Zubair: --complete, --delete, --start, --stop (and --reopen), using SQLite.
@@ -706,7 +710,10 @@ def _main():
 
     """Run the CLI Interface for T3"""
     #parser
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        prog="t3",
+        description="T3: Todo-list / Time / Tracker",
+        epilog=f"Data file: {init_db.db_path()} (change it with the T3_DB environment variable)")
     
     parser.add_argument('userParserInput', nargs='*', help="the user input, will be printed if there are no arguments")
     

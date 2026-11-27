@@ -23,7 +23,11 @@ class DatabaseTests(unittest.TestCase):
         self.addCleanup(os.chdir, self.old_cwd)
 
         os.chdir(self.tmp.name)
-        runpy.run_path(os.path.join(REPO, "init_db.py"))
+        # The database location now comes from T3_DB (default ~/.t3/t3.db),
+        # so point it at this test's temporary folder.
+        os.environ["T3_DB"] = os.path.join(self.tmp.name, "t3.db")
+        self.addCleanup(os.environ.pop, "T3_DB", None)
+        runpy.run_path(os.path.join(REPO, "init_db.py"), run_name="__main__")
 
     def execute_sql(self, query, params=()):
         conn = t3.get_db_connection()

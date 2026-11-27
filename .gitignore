@@ -1,3 +1,10 @@
 t3.db
+*.db
 *.pyc
+__pycache__/
 _pycache_/
+t3_export.csv
+*.egg-info/
+build/
+.venv/
+.idea/
