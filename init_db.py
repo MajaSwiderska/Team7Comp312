@@ -34,6 +34,9 @@ columns = [row[1] for row in cursor.fetchall()]
 if "tags" not in columns:
     cursor.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
 
+cursor.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS unique_project_task on tasks(project_id,name)
+""")
 
 
 conn.commit()
